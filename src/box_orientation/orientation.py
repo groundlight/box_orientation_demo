@@ -2,10 +2,11 @@ from dotenv import load_dotenv
 from groundlight import ExperimentalApi, BBoxGeometry
 from box_orientation.cameras import Cameras
 import matplotlib.pyplot as plt
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import uuid
 import os
 import concurrent.futures
+import time
 
 # loads Groundlight API key from .env file
 load_dotenv()
@@ -36,6 +37,9 @@ class BoxOrientation:
         # setup an object detector for each camera view. It will be used to detect the box in the image
         self.object_detectors = self._initialize_object_detectors()
 
+        # setup a multiclass detector for each camera view. It will be used to determine the box face that is facing each camera.
+        self.multiclass_detectors = self._initialize_multiclass_detectors()
+
     def _initialize_object_detectors(self):
         """
         Initializes an object detector for each camera view.
@@ -55,6 +59,24 @@ class BoxOrientation:
 
         return object_detectors
 
+    def _initialize_multiclass_detectors(self):
+        """
+        Initializes a multiclass detector for each camera view.
+        """
+
+        multiclass_detectors = {}
+
+        for view_name in self.view_names:
+            detector = self.gl.create_multiclass_detector(
+                name=f"{view_name}_multiclass_detector_{uuid.uuid4()}",
+                query="Which face of the box is facing the camera? See notes and example images for reference.",
+                class_names=self.box_faces,
+                confidence_threshold=0.9,
+            )
+            multiclass_detectors[view_name] = detector
+
+        return multiclass_detectors
+
     def onboard_box(self, images_path: str = None, visualize: bool = False):
         """
         Sets up the class to determine the orientation of a box. Either loads images from disk
@@ -67,7 +89,7 @@ class BoxOrientation:
 
         Args:
             images_path (str, optional): Path to directory containing box face images. Images should be named 'front.jpg', 'back.jpg', etc.
-            visualize (bool, optional): Whether to visualize the box faces after they are captured or loaded from disk.
+            visualize (bool, optional): Whether to visualize the intermediate results.
         """
         box_face_images = {}
 
@@ -112,11 +134,32 @@ class BoxOrientation:
             for face_name, image in self.cropped_box_face_images.items()
         }
 
-        self._visualize_box_faces(self.square_box_face_images, title="Square Box Faces")
+        # Create the matrix image. This will be used as a reference for labelers to determine the orientation of the box.
+        self.matrix_image = self._create_image_matrix(self.square_box_face_images)
 
-    def _crop_box_faces(self, box_face_images: dict[str, Image.Image]):
+        if visualize:
+            # Display the matrix
+            plt.figure(figsize=(10, 15))
+            plt.imshow(self.matrix_image)
+            plt.axis("off")
+            plt.title("Box Face Matrix")
+            plt.show()
+
+        # Add a note to each multiclass detector with the image matrix
+        self._add_image_matrix_note_to_multiclass_detectors()
+
+        # Add GT labels to each multiclass detector
+        self._add_groundtruth_to_multiclass_detectors()
+
+    def _crop_box_faces(
+        self, box_face_images: dict[str, Image.Image], visualize: bool = False
+    ):
         """
         Crops box_face_images to the bounding box of the cardboard box.
+
+        Args:
+            box_face_images (dict[str, Image.Image]): A dictionary of the box face images.
+            visualize (bool, optional): Whether to visualize the intermediate results.
 
         Returns a dictionary of the cropped images.
         """
@@ -133,7 +176,9 @@ class BoxOrientation:
             )
             face_names.append(face_name)
 
-        results = self._submit_and_wait_for_queries(submissions)
+        results = self._submit_and_wait_for_queries(
+            submissions=submissions, timeout_sec=5
+        )
 
         box_drawn_images = {}
         for face_name, result in zip(face_names, results):
@@ -141,9 +186,10 @@ class BoxOrientation:
                 box_face_images[face_name], result.rois[0]
             )
 
-        self._visualize_box_faces(
-            box_drawn_images, title="Box Faces with Bounding Boxes"
-        )
+        if visualize:
+            self._visualize_box_faces(
+                box_drawn_images, title="Box Faces with Bounding Boxes"
+            )
 
         cropped_images = {}
         # Match results with the correct face names using the stored order
@@ -152,7 +198,8 @@ class BoxOrientation:
                 box_face_images[face_name], result.rois[0]
             )
 
-        self._visualize_box_faces(cropped_images, title="Cropped Box Faces")
+        if visualize:
+            self._visualize_box_faces(cropped_images, title="Cropped Box Faces")
 
         return cropped_images
 
@@ -185,30 +232,6 @@ class BoxOrientation:
 
         plt.tight_layout()
         plt.show()
-
-    def _submit_image_queries(self, submissions: list[dict]):
-        """
-        Submit multiple image queries in parallel using ThreadPoolExecutor.
-
-        Args:
-            submissions (list[dict]): A list of dictionaries containing "detector" and "image" keys and optionally "metadata".
-        """
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Submit all queries to the thread pool
-            futures = [
-                executor.submit(
-                    self.gl.ask_async,
-                    detector=submission["detector"],
-                    image=submission["image"],
-                    metadata=submission.get("metadata", None),
-                )
-                for submission in submissions
-            ]
-            # Wait for all futures to complete and return results
-            results = [
-                future.result() for future in concurrent.futures.as_completed(futures)
-            ]
-        return results
 
     def _submit_and_wait_for_queries(
         self,
@@ -350,6 +373,168 @@ class BoxOrientation:
 
         return square_img
 
+    def _create_image_matrix(
+        self, square_images: dict[str, Image.Image], grid_width: int = 4
+    ) -> Image.Image:
+        """
+        Creates a 2x3 matrix of square images with red grid lines between them and face labels.
+
+        Args:
+            square_images (dict[str, Image.Image]): Dictionary of square images for each face
+            grid_width (int): Width of the grid lines in pixels
+
+        Returns:
+            Image.Image: Combined image matrix with grid lines and labels
+        """
+        # All images should be the same size since they're square
+        single_size = list(square_images.values())[0].size[0]
+
+        # Create a new image with size 2x3 times the single image size plus space for grid lines
+        matrix_width = single_size * 2 + grid_width
+        matrix_height = single_size * 3 + grid_width * 2
+        matrix_image = Image.new("RGB", (matrix_width, matrix_height), color="red")
+
+        # Define the order of faces in the matrix (2x3)
+        matrix_order = [["front", "back"], ["left", "right"], ["top", "bottom"]]
+
+        draw = ImageDraw.Draw(matrix_image)
+
+        # Use a larger font size and thicker stroke
+        font = ImageFont.load_default(size=60)
+
+        # Paste each image in its position, accounting for grid line spacing
+        for row_idx, row in enumerate(matrix_order):
+            for col_idx, face in enumerate(row):
+                # Calculate position with grid line offsets
+                x = col_idx * single_size + (col_idx * grid_width)
+                y = row_idx * single_size + (row_idx * grid_width)
+
+                # Paste the image
+                matrix_image.paste(square_images[face], (x, y))
+
+                # Add text label
+                text_x = x + 20
+                text_y = y + 20
+                draw.text(
+                    (text_x, text_y),
+                    face.upper(),
+                    fill="red",
+                    font=font,
+                    stroke_width=5,
+                    stroke_fill="white",
+                )
+
+        return matrix_image
+
+    def _add_image_matrix_note_to_multiclass_detectors(self):
+        """
+        After we've created the multiclass detectors (during init) and the image matrix (during onboarding),  we need to attach a note to each of the multiclass detectors with this image.
+        """
+        for detector in self.multiclass_detectors.values():
+            self.gl.create_note(
+                detector=detector,
+                note="See attached image for what each face of the box looks like.",
+                image=self.matrix_image,
+            )
+
+    def _add_groundtruth_to_multiclass_detectors(self):
+        """
+        After we've created the multiclass detectors (during init) we can attach a GT labels with images of each face.
+        """
+        for detector in self.multiclass_detectors.values():
+            for face_name, image in self.square_box_face_images.items():
+                iq = self.gl.ask_async(
+                    detector=detector,
+                    image=image,
+                    metadata={"face_name": face_name},
+                )
+                self.gl.add_label(image_query=iq, label=face_name)
+
+    def get_box_orientation(self, visualize: bool = False):
+        """
+        This function determines the current box orientation
+
+        Args:
+            visualize (bool, optional): Whether to stop to visualize intermediate results.
+        """
+
+        # 1. Capture an image from each camera view
+        # 2. Crop each image to just the box
+        # 3. Submit cropped images to relevant GL multiclass detectors
+        # 4. Get the predicted class for each image
+        # 5. Determine the box orientation based on these predictions
+
+        camera_views = self.cameras.capture()
+
+        # submit each image to the relevant object detector to get the bounding box
+        submissions = []
+        for view_name, image in camera_views.items():
+            submissions.append(
+                {
+                    "detector": self.object_detectors[view_name],
+                    "image": image,
+                    "metadata": {"view_name": view_name},
+                }
+            )
+
+        results = self._submit_and_wait_for_queries(
+            submissions=submissions, timeout_sec=5
+        )
+
+        camera_views_with_bounding_boxes = {}
+        for view_name, result in zip(camera_views.keys(), results):
+            camera_views_with_bounding_boxes[view_name] = self._draw_box(
+                camera_views[view_name], result.rois[0]
+            )
+
+        if visualize:
+            self._visualize_box_faces(
+                camera_views_with_bounding_boxes,
+                title="Box submission: Camera Views with Bounding Boxes",
+            )
+
+        cropped_camera_views = {}
+        for result in results:
+            view_name = result.metadata["view_name"]
+            cropped_camera_views[view_name] = self._crop_image(
+                camera_views[view_name], result.rois[0]
+            )
+
+        if visualize:
+            self._visualize_box_faces(
+                cropped_camera_views,
+                title="Box submission: Cropped Camera Views",
+            )
+
+        # submit each cropped image to the relevant multiclass detector
+        submissions = []
+        for view_name, image in cropped_camera_views.items():
+            submissions.append(
+                {
+                    "detector": self.multiclass_detectors[view_name],
+                    "image": image,
+                    "metadata": {"view_name": view_name},
+                }
+            )
+
+        results = self._submit_and_wait_for_queries(
+            submissions=submissions, timeout_sec=5
+        )
+        # get the label for each view
+        labels = {}
+        for iq in results:
+            labels[iq.metadata["view_name"]] = {
+                "label": iq.result.label,
+                "confidence": iq.result.confidence,
+            }
+
+        # print the results
+        for view_name, label in labels.items():
+            print(
+                f"{view_name} view: {label['label']} (confidence: {label['confidence']})"
+            )
+        print()
+
 
 if __name__ == "__main__":
     orientation = BoxOrientation()
@@ -357,3 +542,9 @@ if __name__ == "__main__":
     # orientation.onboard_box()
     # onboard the box from images on disk
     orientation.onboard_box(images_path="box_face_images")
+    print("Box onboarded")
+
+    while True:
+        print("Getting box orientation...")
+        orientation.get_box_orientation(visualize=False)
+        time.sleep(5)
