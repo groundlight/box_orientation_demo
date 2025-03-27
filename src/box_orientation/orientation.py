@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from groundlight import ExperimentalApi
-from PIL import Image
+from box_orientation.cameras import Cameras
 
 # loads Groundlight API key from .env file
 load_dotenv()
@@ -20,21 +20,41 @@ class BoxOrientation:
         # We use the ExperimentalApi
         self.gl = ExperimentalApi()
 
-        # a dictionary of views from the cameras
-        self.views = None
+        # where the cameras are positioned relative to the conveyor belt
+        view_names = ["top", "front", "side"]
 
-    def get_views(self) -> dict[str, Image.Image]:
-        """
-        Obtains a dictionary of views from the cameras and saves them to self.views
-        {
-            "top": Image.Image,
-            "front": Image.Image,
-            "side": Image.Image,
-        }
-        """
-        pass
+        self.cameras = Cameras(view_names=view_names)
 
     def setup(self):
         """
-        Sets up the class to to determine the orientation of a box. It guides the user through collecting a sample image of each side of the box using the top camera.
+        Sets up the class to to determine the orientation of a box. It guides the user through collecting a sample image of each face of the box using the top camera. It saves the images to self.box_face_images
         """
+
+        box_faces = [
+            "front",
+            "back",
+            "left",
+            "right",
+            "top",
+            "bottom",
+        ]
+
+        box_face_images = {}
+
+        for face in box_faces:
+            print(
+                f"Please show the {face} face of the box to the top camera and press ENTER to capture"
+            )
+
+            # Wait for enter press
+            input("Press ENTER to capture (or Ctrl+C to quit)")
+            # select the relevant image
+            image = self.cameras.capture()["top"]
+            box_face_images[face] = image
+
+        self.box_face_images = box_face_images
+
+
+if __name__ == "__main__":
+    orientation = BoxOrientation()
+    orientation.setup()

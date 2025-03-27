@@ -2,6 +2,7 @@ from framegrab import FrameGrabber
 from imgcat import imgcat
 import cv2
 import matplotlib.pyplot as plt
+from PIL import Image
 
 
 class Cameras:
@@ -9,11 +10,16 @@ class Cameras:
     This class is responsible for camera management for the box orientation application.
     """
 
-    def __init__(self):
+    def __init__(self, view_names: list[str]):
+        """
+        Args:
+            view_names (list[str]): The names of the views.
+        """
         # maps view name to a FrameGrabber object
         self.grabbers = {}
+        self._add_cameras(view_names)
 
-    def add_cameras(self, view_names: list[str]):
+    def _add_cameras(self, view_names: list[str]):
         """
         Adds a camera view to the class.
 
@@ -46,7 +52,11 @@ class Cameras:
         frames = {}
         for view_name, grabber in self.grabbers.items():
             bgr_frame = grabber.grab()
-            frames[view_name] = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+            rgb_frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+            # convert from numpy array to PIL image
+            rgb_frame = Image.fromarray(rgb_frame)
+
+            frames[view_name] = rgb_frame
         return frames
 
     def visualize(self, frames: dict, method: str):
@@ -90,7 +100,6 @@ class Cameras:
 
 
 if __name__ == "__main__":
-    cameras = Cameras()
-    cameras.add_cameras(view_names=["top", "side", "front"])
+    cameras = Cameras(view_names=["top", "side", "front"])
     frames = cameras.capture()
     cameras.visualize(frames, method="window")
