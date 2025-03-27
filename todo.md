@@ -5,13 +5,13 @@ Within each section, work is organized in order of completion.
 
 Owners: Sunil and Harry
 
-- [] Sunil: Carve out some room to build demo (maybe behind Paulina and Sharmila's desks?)
-- [] Sunil: Construct a cube that we will attempt to predict the position of
-- [] Sunil: Set up conveyer belt
+- [x] Sunil: Carve out some room to build demo
+- [x] Sunil: Construct a cube that we will attempt to predict the position of
+- [x] Sunil: Set up conveyer belt
 
 Harry:
 
-- [] Harry: Set up at least 2 but preferably 3 RTSP cameras:
+- [x] Harry: Set up at least 2 but preferably 3 USB cameras:
   - Above belt
   - Side of belt
   - In front of belt (stretch goal if we have enough cameras)
