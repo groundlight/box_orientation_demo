@@ -60,6 +60,11 @@ class BoxOrientation:
         Sets up the class to determine the orientation of a box. Either loads images from disk
         or guides the user through capturing and saving images of each face.
 
+        Then:
+        1. Determines the bounding box of the box in each image
+        2. Crops each image to just the box
+        3. Makes each a square cropped image
+
         Args:
             images_path (str, optional): Path to directory containing box face images. Images should be named 'front.jpg', 'back.jpg', etc.
             visualize (bool, optional): Whether to visualize the box faces after they are captured or loaded from disk.
@@ -98,7 +103,16 @@ class BoxOrientation:
         if visualize:
             self._visualize_box_faces(self.box_face_images, title="Box Faces")
 
-        self._crop_box_faces(self.box_face_images)
+        # crop each image to just the face of the box
+        self.cropped_box_face_images = self._crop_box_faces(self.box_face_images)
+
+        # make each cropped image square
+        self.square_box_face_images = {
+            face_name: self._make_square_image(image)
+            for face_name, image in self.cropped_box_face_images.items()
+        }
+
+        self._visualize_box_faces(self.square_box_face_images, title="Square Box Faces")
 
     def _crop_box_faces(self, box_face_images: dict[str, Image.Image]):
         """
@@ -134,7 +148,6 @@ class BoxOrientation:
         cropped_images = {}
         # Match results with the correct face names using the stored order
         for face_name, result in zip(face_names, results):
-            print(f"{face_name=}, {result.metadata=}")
             cropped_images[face_name] = self._crop_image(
                 box_face_images[face_name], result.rois[0]
             )
@@ -300,6 +313,42 @@ class BoxOrientation:
         draw.rectangle([(left, top), (right, bottom)], outline=color, width=width)
 
         return draw_image
+
+    def _make_square_image(
+        self, image: Image.Image, target_size: int = 500
+    ) -> Image.Image:
+        """
+        Converts an image to a square with black padding while maintaining aspect ratio.
+
+        Args:
+            image (Image.Image): Input PIL Image
+            target_size (int): Width and height of the output square image
+
+        Returns:
+            Image.Image: Square image with black padding if necessary
+        """
+        # Create a black background image
+        square_img = Image.new("RGB", (target_size, target_size), color="black")
+
+        # Get original image size
+        width, height = image.size
+
+        # Calculate the resize ratio to fit within target_size while maintaining aspect ratio
+        ratio = min(target_size / width, target_size / height)
+        new_width = int(width * ratio)
+        new_height = int(height * ratio)
+
+        # Resize the image
+        resized_img = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+        # Calculate position to paste (center the image)
+        paste_x = (target_size - new_width) // 2
+        paste_y = (target_size - new_height) // 2
+
+        # Paste the resized image onto the black background
+        square_img.paste(resized_img, (paste_x, paste_y))
+
+        return square_img
 
 
 if __name__ == "__main__":
