@@ -177,7 +177,7 @@ class BoxOrientation:
             face_names.append(face_name)
 
         results = self._submit_and_wait_for_queries(
-            submissions=submissions, timeout_sec=5
+            submissions=submissions, timeout_sec=20
         )
 
         box_drawn_images = {}
@@ -531,7 +531,7 @@ class BoxOrientation:
         # print the results
         for view_name, label in labels.items():
             print(
-                f"{view_name} view: {label['label']} (confidence: {label['confidence']})"
+                f"{view_name} view: {label['label']} face (confidence: {label['confidence']})"
             )
         print()
 
@@ -541,7 +541,7 @@ if __name__ == "__main__":
     # onboard the box interactively
     # orientation.onboard_box()
     # onboard the box from images on disk
-    orientation.onboard_box(images_path="box_face_images")
+    orientation.onboard_box(images_path="box_face_images", visualize=True)
     print("Box onboarded")
 
     while True:
