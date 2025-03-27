@@ -8,7 +8,11 @@ version = "0.1.0"
 description = "Multi-camera application for determining the orientation of boxes"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "groundlight>=0.22.3",
+    "pillow>=11.1.0",
+    "python-dotenv>=1.1.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/box_orientation"]
