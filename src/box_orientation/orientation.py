@@ -34,30 +34,17 @@ class BoxOrientation:
 
         self.cameras = Cameras(view_names=self.view_names)
 
-        # setup an object detector for each camera view. It will be used to detect the box in the image
-        self.object_detectors = self._initialize_object_detectors()
+        # Replace multiple object detectors with a single one
+        self.object_detector = self.gl.create_counting_detector(
+            name=f"box_detector_{uuid.uuid4()}",
+            query="How many cardboard boxes are in the image?",
+            class_name="cardboard_box",
+            max_count=1,
+            confidence_threshold=0.9,
+        )
 
         # setup a multiclass detector for each camera view. It will be used to determine the box face that is facing each camera.
         self.multiclass_detectors = self._initialize_multiclass_detectors()
-
-    def _initialize_object_detectors(self):
-        """
-        Initializes an object detector for each camera view.
-        """
-
-        object_detectors = {}
-
-        for view_name in self.view_names:
-            detector = self.gl.create_counting_detector(
-                name=f"{view_name}_box_detector_{uuid.uuid4()}",
-                query="How many cardboard boxes are in the image?",
-                class_name="cardboard_box",
-                max_count=1,
-                confidence_threshold=0.9,
-            )
-            object_detectors[view_name] = detector
-
-        return object_detectors
 
     def _initialize_multiclass_detectors(self):
         """
@@ -169,7 +156,7 @@ class BoxOrientation:
         for face_name, image in box_face_images.items():
             submissions.append(
                 {
-                    "detector": self.object_detectors["top"],
+                    "detector": self.object_detector,
                     "image": image,
                     "metadata": {"face_name": face_name},
                 }
@@ -471,7 +458,7 @@ class BoxOrientation:
         for view_name, image in camera_views.items():
             submissions.append(
                 {
-                    "detector": self.object_detectors[view_name],
+                    "detector": self.object_detector,
                     "image": image,
                     "metadata": {"view_name": view_name},
                 }
