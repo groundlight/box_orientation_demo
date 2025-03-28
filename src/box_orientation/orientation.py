@@ -541,8 +541,8 @@ class BoxOrientation:
 
 if __name__ == "__main__":
     # if you have existing detectors, you can pass them in here by their id
-    existing_object_detector_id = "det_2uvLcCR3k1A7OjaPPfP5ezrNu7h"
-    existing_multiclass_detector_id = "det_2uvLcEKZUTB8FgoNaEu4zP9T1Ix"
+    existing_object_detector_id = None
+    existing_multiclass_detector_id = None
 
     orientation = BoxOrientation(
         object_detector_id=existing_object_detector_id,
@@ -551,11 +551,12 @@ if __name__ == "__main__":
 
     print("Onboarding box...")
 
-    # onboard the box from images on disk
-    orientation.onboard_box(images_path="box_face_images", visualize=False)
+    # onboard the box interactively - saves the results to disk so you can onboard from disk next time (if you prefer).
+    orientation.onboard_box(visualize=False)
 
-    # onboard the box interactively
-    # orientation.onboard_box(visualize=False)
+    # onboard the box from images on disk (useful if you don't want to take images interactively every time you start the demo)
+    # orientation.onboard_box(images_path="box_face_images", visualize=False)
+
     print("Box onboarded")
 
     while True:
