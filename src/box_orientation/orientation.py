@@ -7,6 +7,7 @@ import uuid
 import os
 import concurrent.futures
 import time
+from typing import Callable
 
 # loads Groundlight API key from .env file
 load_dotenv()
@@ -21,7 +22,16 @@ class BoxOrientation:
 
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        object_detector_id: str | None = None,
+        multiclass_detector_id: str | None = None,
+    ):
+        """
+        Args:
+            object_detector_id (str | None, optional): The ID of the object detector to use. If not provided, a new one will be created.
+            multiclass_detector_id (str | None, optional): The ID of the multiclass detector to use. If not provided, a new one will be created.
+        """
         # the Groundlight client, which will be used to make requests to the Groundlight API
         # We use the ExperimentalApi
         self.gl = ExperimentalApi()
@@ -34,35 +44,26 @@ class BoxOrientation:
 
         self.cameras = Cameras(view_names=self.view_names)
 
-        # Replace multiple object detectors with a single one
-        self.object_detector = self.gl.create_counting_detector(
-            name=f"box_detector_{uuid.uuid4()}",
-            query="How many cardboard boxes are in the image?",
-            class_name="cardboard_box",
-            max_count=1,
-            confidence_threshold=0.9,
-        )
+        if object_detector_id is None:
+            self.object_detector = self.gl.create_counting_detector(
+                name=f"box_detector_{uuid.uuid4()}",
+                query="How many cardboard boxes are in the image?",
+                class_name="cardboard_box",
+                max_count=1,
+                confidence_threshold=0.75,
+            )
+        else:
+            self.object_detector = self.gl.get_detector(id=object_detector_id)
 
-        # setup a multiclass detector for each camera view. It will be used to determine the box face that is facing each camera.
-        self.multiclass_detectors = self._initialize_multiclass_detectors()
-
-    def _initialize_multiclass_detectors(self):
-        """
-        Initializes a multiclass detector for each camera view.
-        """
-
-        multiclass_detectors = {}
-
-        for view_name in self.view_names:
-            detector = self.gl.create_multiclass_detector(
-                name=f"{view_name}_multiclass_detector_{uuid.uuid4()}",
+        if multiclass_detector_id is None:
+            self.multiclass_detector = self.gl.create_multiclass_detector(
+                name=f"box_face_detector_{uuid.uuid4()}",
                 query="Which face of the box is facing the camera? See notes and example images for reference.",
                 class_names=self.box_faces,
-                confidence_threshold=0.9,
+                confidence_threshold=0.75,
             )
-            multiclass_detectors[view_name] = detector
-
-        return multiclass_detectors
+        else:
+            self.multiclass_detector = self.gl.get_detector(id=multiclass_detector_id)
 
     def onboard_box(self, images_path: str = None, visualize: bool = False):
         """
@@ -164,7 +165,9 @@ class BoxOrientation:
             face_names.append(face_name)
 
         results = self._submit_and_wait_for_queries(
-            submissions=submissions, timeout_sec=20
+            ask_method=self.gl.ask_ml,
+            submissions=submissions,
+            timeout_sec=20,
         )
 
         box_drawn_images = {}
@@ -222,6 +225,7 @@ class BoxOrientation:
 
     def _submit_and_wait_for_queries(
         self,
+        ask_method: Callable,
         submissions: list[dict],
         timeout_sec: float = 60.0,
     ):
@@ -229,6 +233,7 @@ class BoxOrientation:
         Submit multiple image queries in parallel and wait for their results.
 
         Args:
+            ask_method: GL API method to use to submit queries, e.g. self.gl.ask_async
             submissions: List of dictionaries containing "detector" and "image" keys and optionally "metadata".
             timeout_sec: Maximum time to wait for results
 
@@ -238,17 +243,20 @@ class BoxOrientation:
 
         def submit_and_wait(submission):
             # Submit the query
-            query = self.gl.ask_async(
+            query = ask_method(
                 detector=submission["detector"],
                 image=submission["image"],
                 metadata=submission.get("metadata", None),
             )
 
-            # Wait for the result
-            return self.gl.wait_for_confident_result(
-                image_query=query,
-                timeout_sec=timeout_sec,
-            )
+            if ask_method == self.gl.ask_async:
+                # Wait for the result
+                return self.gl.wait_for_confident_result(
+                    image_query=query,
+                    timeout_sec=timeout_sec,
+                )
+            else:
+                return query
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
             # Create futures and store them in order
@@ -415,27 +423,26 @@ class BoxOrientation:
 
     def _add_image_matrix_note_to_multiclass_detectors(self):
         """
-        After we've created the multiclass detectors (during init) and the image matrix (during onboarding),  we need to attach a note to each of the multiclass detectors with this image.
+        After we've created the multiclass detector (during init) and the image matrix (during onboarding),
+        we need to attach a note with this image.
         """
-        for detector in self.multiclass_detectors.values():
-            self.gl.create_note(
-                detector=detector,
-                note="See attached image for what each face of the box looks like.",
-                image=self.matrix_image,
-            )
+        self.gl.create_note(
+            detector=self.multiclass_detector,
+            note="See attached image for what each face of the box looks like.",
+            image=self.matrix_image,
+        )
 
     def _add_groundtruth_to_multiclass_detectors(self):
         """
-        After we've created the multiclass detectors (during init) we can attach a GT labels with images of each face.
+        After we've created the multiclass detector (during init) we can attach GT labels with images of each face.
         """
-        for detector in self.multiclass_detectors.values():
-            for face_name, image in self.square_box_face_images.items():
-                iq = self.gl.ask_async(
-                    detector=detector,
-                    image=image,
-                    metadata={"face_name": face_name},
-                )
-                self.gl.add_label(image_query=iq, label=face_name)
+        for face_name, image in self.square_box_face_images.items():
+            iq = self.gl.ask_async(
+                detector=self.multiclass_detector,
+                image=image,
+                metadata={"face_name": face_name},
+            )
+            self.gl.add_label(image_query=iq, label=face_name)
 
     def get_box_orientation(self, visualize: bool = False):
         """
@@ -443,16 +450,19 @@ class BoxOrientation:
 
         Args:
             visualize (bool, optional): Whether to stop to visualize intermediate results.
-        """
 
+        Returns:
+            dict: Dictionary containing the detected faces and their confidences for each view
+        """
         # 1. Capture an image from each camera view
         # 2. Crop each image to just the box
-        # 3. Submit cropped images to relevant GL multiclass detectors
+        # 3. Submit cropped images to GL multiclass detector
         # 4. Get the predicted class for each image
         # 5. Determine the box orientation based on these predictions
 
         camera_views = self.cameras.capture()
 
+        print("Getting bounding boxes...")
         # submit each image to the relevant object detector to get the bounding box
         submissions = []
         for view_name, image in camera_views.items():
@@ -465,16 +475,23 @@ class BoxOrientation:
             )
 
         results = self._submit_and_wait_for_queries(
-            submissions=submissions, timeout_sec=5
+            # using ask_ml here as I've seen we can zeroshot this very reliably.
+            ask_method=self.gl.ask_ml,
+            submissions=submissions,
+            timeout_sec=5,
         )
+        print("Got bounding boxes")
 
-        camera_views_with_bounding_boxes = {}
-        for view_name, result in zip(camera_views.keys(), results):
-            camera_views_with_bounding_boxes[view_name] = self._draw_box(
-                camera_views[view_name], result.rois[0]
-            )
+        # only keep results that have at least one ROI. Those with 0 ROIs means we didn't detect a box from that view.
+        results = [result for result in results if len(result.rois) > 0]
 
         if visualize:
+            camera_views_with_bounding_boxes = {}
+            for view_name, result in zip(camera_views.keys(), results):
+                camera_views_with_bounding_boxes[view_name] = self._draw_box(
+                    camera_views[view_name], result.rois[0]
+                )
+
             self._visualize_box_faces(
                 camera_views_with_bounding_boxes,
                 title="Box submission: Camera Views with Bounding Boxes",
@@ -493,47 +510,60 @@ class BoxOrientation:
                 title="Box submission: Cropped Camera Views",
             )
 
-        # submit each cropped image to the relevant multiclass detector
+        print("Getting multiclass detector predictions...")
+        # submit each cropped image to the multiclass detector
         submissions = []
         for view_name, image in cropped_camera_views.items():
             submissions.append(
                 {
-                    "detector": self.multiclass_detectors[view_name],
+                    "detector": self.multiclass_detector,
                     "image": image,
                     "metadata": {"view_name": view_name},
                 }
             )
 
         results = self._submit_and_wait_for_queries(
-            submissions=submissions, timeout_sec=5
+            ask_method=self.gl.ask_ml,
+            submissions=submissions,
+            timeout_sec=3,
         )
+        print("Got multiclass detector predictions")
         # get the label for each view
         labels = {}
         for iq in results:
             labels[iq.metadata["view_name"]] = {
                 "label": iq.result.label,
-                "confidence": iq.result.confidence,
+                "confidence": round(iq.result.confidence, 2),
             }
 
-        # print the results
-        for view_name, label in labels.items():
-            print(
-                f"{view_name} view: {label['label']} face (confidence: {label['confidence']})"
-            )
-        print()
+        return labels
 
 
 if __name__ == "__main__":
-    orientation = BoxOrientation()
-    # onboard the box interactively
-    # orientation.onboard_box()
+    # if you have existing detectors, you can pass them in here by their id
+    existing_object_detector_id = "det_2uvLcCR3k1A7OjaPPfP5ezrNu7h"
+    existing_multiclass_detector_id = "det_2uvLcEKZUTB8FgoNaEu4zP9T1Ix"
+
+    orientation = BoxOrientation(
+        object_detector_id=existing_object_detector_id,
+        multiclass_detector_id=existing_multiclass_detector_id,
+    )
+
+    print("Onboarding box...")
 
     # onboard the box from images on disk
-    orientation.onboard_box(images_path="box_face_images", visualize=True)
+    orientation.onboard_box(images_path="box_face_images", visualize=False)
 
+    # onboard the box interactively
+    # orientation.onboard_box(visualize=False)
     print("Box onboarded")
 
     while True:
         print("Getting box orientation...")
-        orientation.get_box_orientation(visualize=True)
-        time.sleep(5)
+        orientation_results = orientation.get_box_orientation(visualize=False)
+        for view_name, label in orientation_results.items():
+            print(
+                f"{view_name} view: {label['label']} face (confidence: {label['confidence']})"
+            )
+        print()
+        time.sleep(0.1)
