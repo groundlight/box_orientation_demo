@@ -15,11 +15,11 @@ We have 3 usb webcams (logitech brios) plugged into a USB hub, which is then con
 
 ## Run the demo
 
-1. Verify that the cameras are working: `uv run src/box_orientation/cameras.py`. This will open a window with the three camera views. If the views are not properly labeled, you might need to adjust the order of the camera views in the `src/box_orientation/cameras.py` file on the line `cameras = Cameras(view_names=["top", "side", "front"])`. Once you determine the correct order, update the order on the line `self.view_names = ["top", "front", "side"]` in the `src/box_orientation/orientation.py` file to match. 
+1. Verify that the cameras are working: `uv run python src/box_orientation/cameras.py`. This will open a window with the three camera views. If the views are not properly labeled, you might need to adjust the order of the camera views in the `src/box_orientation/cameras.py` file on the line `cameras = Cameras(view_names=["top", "side", "front"])`. Once you determine the correct order, update the order on the line `self.view_names = ["top", "front", "side"]` in the `src/box_orientation/orientation.py` file to match. 
 
 <img src="images/camera_setup.png" width="1000" alt="Camera setup"/>
 
-2. Run the demo: `uv run src/box_orientation/orientation.py`. It will first ask you to onboard your box. This will involve taking an image of each side of the box using the camera positioned to capture the box from the top. Then it will start a while loop, predicting the orientation of the box every few seconds. Groundlight's cloud labelers will automatically start labeling images as they are captured, and Groundlight will build and continuously update the models necessary for the demo. You can review the performance of the models or add your own labels on the Groundlight [dashboard](https://dashboard.groundlight.ai/). 
+2. Run the demo: `uv run python src/box_orientation/orientation.py`. It will first ask you to onboard your box. This will involve taking an image of each side of the box using the camera positioned to capture the box from the top. Then it will start a while loop, predicting the orientation of the box every few seconds. Groundlight's cloud labelers will automatically start labeling images as they are captured, and Groundlight will build and continuously update the models necessary for the demo. You can review the performance of the models or add your own labels on the Groundlight [dashboard](https://dashboard.groundlight.ai/). 
 
 
 
