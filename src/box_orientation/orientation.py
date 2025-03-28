@@ -540,11 +540,13 @@ if __name__ == "__main__":
     orientation = BoxOrientation()
     # onboard the box interactively
     # orientation.onboard_box()
+
     # onboard the box from images on disk
     orientation.onboard_box(images_path="box_face_images", visualize=True)
+
     print("Box onboarded")
 
     while True:
         print("Getting box orientation...")
-        orientation.get_box_orientation(visualize=False)
+        orientation.get_box_orientation(visualize=True)
         time.sleep(5)
